@@ -13,6 +13,7 @@ import os
 import matplotlib.pyplot as plt
 import torch
 from lensless.eval.benchmark import benchmark
+from lensless.recon.trainable_mask import TrainableMask
 from tqdm import tqdm
 from lensless.recon.drunet.network_unet import UNetRes
 
@@ -217,6 +218,7 @@ class Trainer:
         recon,
         train_dataset,
         test_dataset,
+        mask=None,
         batch_size=4,
         loss="l2",
         lpips=None,
@@ -236,6 +238,8 @@ class Trainer:
             Dataset to use for training.
         test_dataset : torch.utils.data.Dataset
             Dataset to use for testing.
+        mask : TrainableMask, optional
+            Trainable mask to use for training. If none, training with fix psf, by default None.
         batch_size : int, optional
             Batch size to use for training, by default 4
         loss : str, optional
@@ -266,6 +270,13 @@ class Trainer:
         self.test_dataset = test_dataset
         self.lpips = lpips
         self.skip_NAN = skip_NAN
+
+        if mask is not None:
+            assert isinstance(mask, TrainableMask)
+            self.mask = mask
+            self.use_mask = True
+        else:
+            self.use_mask = False
 
         # loss
         if loss == "l2":
@@ -344,15 +355,15 @@ class Trainer:
                     if param.requires_grad:
                         param.register_hook(detect_nan)
 
-    def train_epoch(self, data_loader, disp=-1):
+    def train_epoch(self, data_loader, disp):
         """Train for on epoch.
 
         Parameters
         ----------
         data_loader : torch.utils.data.DataLoader
             Data loader to use for training.
-        disp : int, optional
-            Display interval, if -1, no display, by default -1
+        disp : int
+            Display interval, if -1, no display
 
         Returns
         -------
@@ -370,6 +381,11 @@ class Trainer:
                 X = X
                 y = y
 
+            # update psf according to mask
+            if self.use_mask:
+                self.recon._set_psf(self.mask.get_psf())
+
+            # forward pass
             y_pred = self.recon.batch_call(X.to(self.device))
             # normalizing each output
             eps = 1e-12
@@ -417,6 +433,10 @@ class Trainer:
                     continue
             self.optimizer.step()
 
+            # update mask
+            if self.use_mask:
+                self.mask.update_mask()
+
             mean_loss += (loss_v.item() - mean_loss) * (1 / i)
             pbar.set_description(f"loss : {mean_loss}")
             i += 1
@@ -446,7 +466,7 @@ class Trainer:
             with open(os.path.join(save_pt, "metrics.json"), "w") as f:
                 json.dump(self.metrics, f)
 
-    def train(self, n_epoch=1, save_pt=None):
+    def train(self, n_epoch=1, save_pt=None, disp=-1):
         """Train the reconstruction algorithm.
 
         Parameters
@@ -455,13 +475,15 @@ class Trainer:
             Number of epochs to train for, by default 1
         save_pt : str, optional
             Path to save metrics dictionary to. If None, no logging of metrics, by default None
+        disp : int, optional
+            Display interval, if -1, no display. Default is -1.
         """
 
         start_time = time.time()
 
         for epoch in range(n_epoch):
             print(f"Epoch {epoch} with learning rate {self.scheduler.get_last_lr()}")
-            mean_loss = self.train_epoch(self.train_dataloader)
+            mean_loss = self.train_epoch(self.train_dataloader, disp=disp)
             self.evaluate(mean_loss, save_pt)
             self.scheduler.step()
 
