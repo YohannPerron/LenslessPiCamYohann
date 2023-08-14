@@ -20,10 +20,9 @@ import os
 import numpy as np
 import time
 from lensless import UnrolledFISTA, UnrolledADMM
-from waveprop.dataset_util import SimulatedPytorchDataset
+from lensless.utils.dataset import DiffuserCamTestDataset, SimulatedDataset
 from lensless.recon.utils import create_process_network
 from lensless.utils.image import rgb2gray
-from lensless.eval.benchmark import DiffuserCamTestDataset
 from lensless.recon.utils import Trainer
 import torch
 from torchvision import transforms, datasets
@@ -52,13 +51,9 @@ def simulate_dataset(config, psf):
         psf = rgb2gray(psf)
     if not isinstance(psf, torch.Tensor):
         psf = transforms.ToTensor()(psf)
-    elif psf.shape[-1] == 3:
-        # Waveprop syntetic dataset expect C H W
-        psf = psf.permute(2, 0, 1)
 
     n_files = config.files.n_files
     device_conv = config.torch_device
-    target = config.target
 
     # check if gpu is available
     if device_conv == "cuda" and torch.cuda.is_available():
@@ -69,8 +64,8 @@ def simulate_dataset(config, psf):
     # create Pytorch dataset and dataloader
     if n_files is not None:
         ds = torch.utils.data.Subset(ds, np.arange(n_files))
-    ds_prop = SimulatedPytorchDataset(
-        dataset=ds, psf=psf, device_conv=device_conv, target=target, **config.simulation
+    ds_prop = SimulatedDataset(
+        dataset=ds, psf=psf, dataset_is_CHW=True, device_conv=device_conv, **config.simulation
     )
     return ds_prop
 
@@ -88,9 +83,6 @@ def train_unrolled(
 
     # torch.autograd.set_detect_anomaly(True)
 
-    # if using a portrait dataset rotate the PSF
-    flip = config.files.dataset in ["CelebA"]
-
     # benchmarking dataset:
     path = os.path.join(get_original_cwd(), "data")
     benchmark_dataset = DiffuserCamTestDataset(
@@ -105,8 +97,6 @@ def train_unrolled(
         psf = psf[..., [2, 1, 0]]
 
     # if using a portrait dataset rotate the PSF
-    if flip:
-        psf = torch.rot90(psf, dims=[0, 1])
 
     disp = config.display.disp
     if disp < 0:
@@ -170,17 +160,21 @@ def train_unrolled(
     # load dataset and create dataloader
     if config.files.dataset == "DiffuserCam":
         # Use a ParallelDataset
-        from lensless.eval.benchmark import ParallelDataset
+        from lensless.utils.dataset import ParallelDataset
+
+        max_indices = 30000
+        if config.files.n_files is not None:
+            max_indices = config.files.n_files + 1000
 
         data_path = os.path.join(get_original_cwd(), "data", "DiffuserCam")
         dataset = ParallelDataset(
             root_dir=data_path,
-            n_files=config.files.n_files,
+            indices=range(1000, max_indices),
             background=background,
             psf=psf,
             lensless_fn="diffuser_images",
             lensed_fn="ground_truth_lensed",
-            downsample=config.simulation.downsample,
+            downsample=config.simulation.downsample / 4,
             transform_lensless=transform_BRG2RGB,
             transform_lensed=transform_BRG2RGB,
         )

@@ -22,6 +22,9 @@ Added
 - Script for measuring arbitrary dataset (from Raspberry Pi).
 - Support for preprocessing and postprocessing, such as denoising, in ``TrainableReconstructionAlgorithm``. Both trainable and fix postprocessing can be used.
 - Utilities to load a trained DruNet model for use as postprocessing in ``TrainableReconstructionAlgorithm``.
+- Unified interface for dataset. See ``utils.dataset.DualDataset``.
+- New simulated dataset compatible with new data format ([(batch_size), depth, width, height, color]). See ``utils.dataset.SimulatedDataset``.
+- New dataset for pair of original image and thair measurement from a screen. See ``utils.dataset.LenslessDataset``.
 - Support for unrolled loading and inference in the script ``admm.py``.
 - Tikhonov reconstruction for coded aperture measurements (MLS / MURA).
 
