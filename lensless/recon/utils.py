@@ -377,9 +377,6 @@ class Trainer:
             # send to device
             X = X.to(self.device)
             y = y.to(self.device)
-            if X.shape[3] == 3:
-                X = X
-                y = y
 
             # update psf according to mask
             if self.use_mask:
@@ -453,6 +450,8 @@ class Trainer:
         save_pt : str
             Path to save metrics dictionary to. If None, no logging of metrics.
         """
+        if self.test_dataset is None:
+            return
         # benchmarking
         current_metrics = benchmark(self.recon, self.test_dataset, batchsize=10)
 
@@ -466,6 +465,24 @@ class Trainer:
             with open(os.path.join(save_pt, "metrics.json"), "w") as f:
                 json.dump(self.metrics, f)
 
+    def on_epoch_end(self, mean_loss, save_pt):
+        """Called at the end of each epoch.
+
+        Parameters
+        ----------
+        mean_loss : float
+            Mean loss of the last epoch.
+        save_pt : str
+            Path to save metrics dictionary to. If None, no logging of metrics.
+        """
+        if save_pt is None:
+            # Use current directory
+            save_pt = os.getcwd()
+
+        # save model
+        self.save(path=save_pt, include_optimizer=False)
+        self.evaluate(mean_loss, save_pt)
+
     def train(self, n_epoch=1, save_pt=None, disp=-1):
         """Train the reconstruction algorithm.
 
@@ -474,7 +491,7 @@ class Trainer:
         n_epoch : int, optional
             Number of epochs to train for, by default 1
         save_pt : str, optional
-            Path to save metrics dictionary to. If None, no logging of metrics, by default None
+            Path to save metrics dictionary to. If None, use current directory, by default None
         disp : int, optional
             Display interval, if -1, no display. Default is -1.
         """
@@ -484,10 +501,26 @@ class Trainer:
         for epoch in range(n_epoch):
             print(f"Epoch {epoch} with learning rate {self.scheduler.get_last_lr()}")
             mean_loss = self.train_epoch(self.train_dataloader, disp=disp)
-            self.evaluate(mean_loss, save_pt)
+            self.on_epoch_end(mean_loss, save_pt)
             self.scheduler.step()
 
         print(f"Train time : {time.time() - start_time} s")
 
-    def save(self, path="recon.pt"):
-        torch.save(self.recon.state_dict(), path)
+    def save(self, path="recon", include_optimizer=False):
+        # create directory if it does not exist
+        if not os.path.exists(path):
+            os.makedirs(path)
+        # save mask
+        if self.use_mask:
+            torch.save(self.mask._mask, os.path.join(path, "mask.pt"))
+            torch.save(self.mask._optimizer.state_dict(), os.path.join(path, "mask_optim.pt"))
+            import matplotlib.pyplot as plt
+
+            plt.imsave(
+                os.path.join(path, "psf.png"), self.mask.get_psf().detach().cpu().numpy()[0, ...]
+            )
+        # save optimizer
+        if include_optimizer:
+            torch.save(self.optimizer.state_dict(), os.path.join(path, "optim.pt"))
+        # save recon
+        torch.save(self.recon.state_dict(), os.path.join(path, "recon.pt"))
